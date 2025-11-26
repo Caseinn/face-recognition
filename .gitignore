@@ -1,0 +1,111 @@
+# =====================================
+# PYTHON CACHE / BUILD / RUNTIME
+# =====================================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Byte-compiled / optimized / DLL files
+*.so
+*.dll
+*.pyd
+
+# C extensions
+*.c
+
+# =====================================
+# VIRTUAL ENVIRONMENTS
+# =====================================
+venv/
+.env/
+.env.bak/
+env/
+ENV/
+.venv/
+
+# =====================================
+# DISTRIBUTION / BUILD FILES
+# =====================================
+build/
+dist/
+develop-eggs/
+eggs/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# =====================================
+# JUPYTER NOTEBOOK
+# =====================================
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+
+# =====================================
+# OS / EDITOR TRASH FILES
+# =====================================
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+
+# =====================================
+# LOGS / TEMP / CACHE
+# =====================================
+*.log
+logs/
+*.out
+tmp/
+temp/
+cache/
+wandb/
+mlruns/
+tensorboard/
+runs/
+
+# =====================================
+# MODEL WEIGHTS / CHECKPOINTS
+# =====================================
+*.pt
+*.ckpt
+*.onnx
+*.h5
+
+checkpoints/
+saved_models/
+
+# =====================================
+# PYTORCH LIGHTNING / HF
+# =====================================
+lightning_logs/
+output/
+outputs/
+
+# =====================================
+# IMAGE DATASETS / BIG FILES
+# =====================================
+data/
+dataset/
+datasets/
+*.zip
+*.rar
+
+# =====================================
+# ENVIRONMENT / SECRETS
+# =====================================
+*.env
+*.ini
+secret.json
+credentials.json
+
+# =====================================
+# VS CODE / PYCHARM / EDITOR CONFIGS
+# =====================================
+.vscode/
+.idea/
+
+# =====================================
+# PROJECT SPECIFIC
+# =====================================
+__temp__/
+__debug__/
