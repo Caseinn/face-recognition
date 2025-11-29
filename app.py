@@ -19,6 +19,7 @@ import gradio as gr
 MODEL_PATH = "models/best_resnet50_arcface.pth"
 LABEL_MAP_PATH = "models/label_map.json"
 IMG_SIZE = 224  # input size model
+UNKNOWN_THRESHOLD = 0.3
 
 # ---- Face crop config (mirip script crop-mu) ----
 TARGET_SIZE = (384, 384)   # ukuran crop akhir sebelum di-resize ke 224
@@ -326,10 +327,19 @@ def predict_with_crop(img: Image.Image):
         probs = torch.softmax(logits, dim=1)[0]
 
     probs_np = probs.cpu().numpy()
-    out_dict = {idx_to_name[i]: float(probs_np[i]) for i in range(len(idx_to_name))}
+
+    top_idx = int(probs_np.argmax())
+    top_prob = float(probs_np[top_idx])
+
+    if top_prob < UNKNOWN_THRESHOLD:
+        out_dict = {"Unknown": top_prob}
+    else:
+        out_dict = {
+            idx_to_name[i]: float(probs_np[i])
+            for i in range(len(idx_to_name))
+        }
 
     return face_pil, out_dict
-
 
 # ============================================
 # BLOCK 7 – GRADIO UI
