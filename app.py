@@ -22,7 +22,7 @@ IMG_SIZE = 224  # input size model
 
 # ---- Face crop config (mirip script crop-mu) ----
 TARGET_SIZE = (384, 384)   # ukuran crop akhir sebelum di-resize ke 224
-MARGIN_RATIO = 0.25
+MARGIN_RATIO = 0.15
 MAX_DIM = 1600
 MIN_DIM = 256
 USE_CENTER_FALLBACK = True

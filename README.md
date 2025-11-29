@@ -87,10 +87,10 @@ face-recognition/
 
 <div align="center">
 
-| 🏗️ Architecture | 📈 Val Accuracy | 🎯 Best Accuracy | 📅 Best Epoch |
-|:---------------:|:---------------:|:----------------:|:-------------:|
-| **ResNet50** | 80.0% | 82.86% | 22 |
-| **DeiT-Small** | 61.43% | 61.43% | 22 |
+| 🏗️ Architecture | 📈 Val Accuracy
+|:---------------:|:---------------:|
+| **ResNet50** | 77% |
+| **DeiT-Small** | 63% |
 
 </div>
 
