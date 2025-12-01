@@ -7,6 +7,8 @@ from typing import Optional
 from datetime import datetime
 import csv
 import os
+from zoneinfo import ZoneInfo
+
 
 from PIL import Image, ImageOps
 
@@ -332,7 +334,7 @@ def initialize_attendance_log():
 
 def log_attendance(name: str, confidence: float):
     """Log attendance with timestamp"""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = datetime.now(ZoneInfo("Asia/Jakarta")).strftime("%Y-%m-%d %H:%M:%S")
 
     # Determine status based on confidence and name
     if name in ["Unknown", "No face detected", "No image"]:
@@ -392,7 +394,7 @@ initialize_attendance_log()
 # BLOCK 8 – GRADIO UI
 # ============================================
 with gr.Blocks() as demo:
-    gr.Markdown("<h1 id='title'>Face Recognition Demo</h1>")
+    gr.Markdown("<h1 id='title'>Attendance System</h1>")
     gr.Markdown(
         "<p id='description'>Upload a photo with a face. The system will detect and crop the face using MediaPipe, then predict identity with FaceNet + ArcFace.</p>"
     )
@@ -469,6 +471,9 @@ with gr.Blocks() as demo:
 
 if __name__ == "__main__":
     demo.launch(
+        server_name="0.0.0.0",
+        server_port=int(os.getenv("PORT", 7860)),
+        ssr_mode=False, 
         theme=gr.themes.Soft(),
         css="""
         .gradio-container {
