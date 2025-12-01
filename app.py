@@ -4,6 +4,9 @@
 import json
 import numpy as np
 from typing import Optional
+from datetime import datetime
+import csv
+import os
 
 from PIL import Image, ImageOps
 
@@ -18,6 +21,7 @@ import gradio as gr
 # ---- Model & data config ----
 MODEL_PATH = "models/best_resnet50_arcface.pth"
 LABEL_MAP_PATH = "models/label_map.json"
+ATTENDANCE_FILE = "attendance_log.csv"
 IMG_SIZE = 224  # input size model
 UNKNOWN_THRESHOLD = 0.3
 
@@ -341,19 +345,74 @@ def predict_with_crop(img: Image.Image):
 
     return face_pil, out_dict
 
+
 # ============================================
-# BLOCK 7 – GRADIO UI
+# BLOCK 7 – ATTENDANCE FUNCTIONS
+# ============================================
+def init_attendance_file():
+    """Initialize CSV file if it doesn't exist"""
+    if not os.path.exists(ATTENDANCE_FILE):
+        with open(ATTENDANCE_FILE, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(['Timestamp', 'Name', 'Confidence'])
+
+
+def record_attendance(name: str, confidence: float):
+    """Record attendance to CSV file"""
+    init_attendance_file()
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    with open(ATTENDANCE_FILE, 'a', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow([timestamp, name, f'{confidence:.2%}'])
+    
+    return f"✓ Attendance recorded for {name} at {timestamp}"
+
+
+def get_attendance_log():
+    """Get attendance log as a formatted string"""
+    init_attendance_file()
+    
+    if not os.path.exists(ATTENDANCE_FILE):
+        return "No attendance records yet."
+    
+    with open(ATTENDANCE_FILE, 'r', encoding='utf-8') as f:
+        reader = csv.reader(f)
+        rows = list(reader)
+    
+    if len(rows) <= 1:  # Only header or empty
+        return "No attendance records yet."
+    
+    # Format as table
+    log_text = "# Attendance Log\n\n"
+    log_text += "| Timestamp | Name | Confidence |\n"
+    log_text += "|-----------|------|------------|\n"
+    
+    # Show last 20 records (reversed to show newest first)
+    for row in reversed(rows[1:][:20]):
+        if len(row) == 3:
+            log_text += f"| {row[0]} | {row[1]} | {row[2]} |\n"
+    
+    return log_text
+
+
+# ============================================
+# BLOCK 8 – GRADIO UI
 # ============================================
 with gr.Blocks() as demo:
-    gr.Markdown("<h1 id='title'>Face Recognition Demo</h1>")
-    gr.Markdown("<p id='description'>Upload a photo with a face. The system will detect and crop the face using MediaPipe, then predict identity with ResNet50 + ArcFace.</p>")
+    gr.Markdown("<h1 id='title'>Face Recognition Attendance System</h1>")
+    gr.Markdown("<p id='description'>Upload a photo to detect and recognize faces. Mark attendance for recognized individuals.</p>")
+    
+    # State to store current recognized name and confidence
+    current_name = gr.State(value=None)
+    current_conf = gr.State(value=None)
     
     with gr.Row():
         with gr.Column(scale=1):
             input_image = gr.Image(
                 type="pil",
                 label="Upload Photo",
-                height=600
+                height=400
             )
             with gr.Row():
                 clear_btn = gr.Button("Clear", variant="secondary", size="lg", scale=1)
@@ -363,23 +422,78 @@ with gr.Blocks() as demo:
             cropped_face = gr.Image(
                 type="pil",
                 label="Detected Face",
-                height=302
+                height=200
             )
             prediction = gr.Label(
                 num_top_classes=5,
                 label="Identity Prediction (Top-5)"
             )
+            
+            # Attendance section
+            with gr.Group():
+                attend_btn = gr.Button(
+                    "✓ Mark Attendance", 
+                    variant="primary", 
+                    size="lg",
+                    visible=True
+                )
+                attendance_status = gr.Markdown("")
     
+    # Attendance log section
+    gr.Markdown("---")
+    with gr.Row():
+        with gr.Column():
+            gr.Markdown("## 📋 Attendance Log")
+            refresh_log_btn = gr.Button("🔄 Refresh Log", size="sm")
+            attendance_log = gr.Markdown(value=get_attendance_log())
+    
+    # Helper function to extract top prediction
+    def analyze_and_store(img):
+        face, pred_dict = predict_with_crop(img)
+        
+        # Extract top prediction
+        if pred_dict and "Unknown" not in pred_dict and "No face detected" not in pred_dict and "No image" not in pred_dict:
+            top_name = max(pred_dict, key=pred_dict.get)
+            top_conf = pred_dict[top_name]
+            return face, pred_dict, top_name, top_conf, ""
+        else:
+            return face, pred_dict, None, None, ""
+    
+    # Function to mark attendance
+    def mark_attendance(name, conf):
+        if name is None or name == "Unknown":
+            return "⚠️ Cannot mark attendance: Unknown person", get_attendance_log()
+        
+        message = record_attendance(name, conf)
+        updated_log = get_attendance_log()
+        return message, updated_log
+    
+    # Predict button
     predict_btn.click(
-        fn=predict_with_crop,
+        fn=analyze_and_store,
         inputs=input_image,
-        outputs=[cropped_face, prediction]
+        outputs=[cropped_face, prediction, current_name, current_conf, attendance_status]
     )
     
+    # Attendance button
+    attend_btn.click(
+        fn=mark_attendance,
+        inputs=[current_name, current_conf],
+        outputs=[attendance_status, attendance_log]
+    )
+    
+    # Clear button
     clear_btn.click(
-        fn=lambda: (None, None, None),
+        fn=lambda: (None, None, None, None, None, ""),
         inputs=None,
-        outputs=[input_image, cropped_face, prediction]
+        outputs=[input_image, cropped_face, prediction, current_name, current_conf, attendance_status]
+    )
+    
+    # Refresh log button
+    refresh_log_btn.click(
+        fn=get_attendance_log,
+        inputs=None,
+        outputs=attendance_log
     )
 
 if __name__ == "__main__":
