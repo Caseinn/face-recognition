@@ -13,20 +13,22 @@ from PIL import Image, ImageOps
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision import models, transforms
+from torchvision import transforms
+from facenet_pytorch import InceptionResnetV1
 
 import mediapipe as mp
 import gradio as gr
+import pandas as pd  # <-- untuk tabel attendance
 
 # ---- Model & data config ----
-MODEL_PATH = "models/best_resnet50_arcface.pth"
+MODEL_PATH = "models/best_facenet_arcface_kfold5.pth"  # ganti ke model FaceNet-mu
 LABEL_MAP_PATH = "models/label_map.json"
 ATTENDANCE_FILE = "attendance_log.csv"
-IMG_SIZE = 224  # input size model
+IMG_SIZE = 160
 UNKNOWN_THRESHOLD = 0.3
 
 # ---- Face crop config (mirip script crop-mu) ----
-TARGET_SIZE = (384, 384)   # ukuran crop akhir sebelum di-resize ke 224
+TARGET_SIZE = (384, 384)
 MARGIN_RATIO = 0.15
 MAX_DIM = 1600
 MIN_DIM = 256
@@ -34,16 +36,12 @@ USE_CENTER_FALLBACK = True
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-
 # ============================================
 # BLOCK 2 – LOAD LABEL MAP
 # ============================================
 with open(LABEL_MAP_PATH, "r", encoding="utf-8") as f:
-    label_map = json.load(f)
-
-# label_map: {"NamaOrang": idx}
+    label_map = json.load(f)  # label_map: {"NamaOrang": idx}
 idx_to_name = {v: k for k, v in label_map.items()}
-
 
 # ============================================
 # BLOCK 3 – MEDIAPIPE FACE DETECTION HELPERS
@@ -58,25 +56,20 @@ def run_face_detection(img_rgb: np.ndarray):
     - Kalau gagal, fallback ke model_selection=0 (short range) dengan threshold lebih longgar.
     """
     h, w = img_rgb.shape[:2]
-
     # Pass 1: full range
     with mp_face_detection.FaceDetection(
-        model_selection=1,
-        min_detection_confidence=0.5
+        model_selection=1, min_detection_confidence=0.5
     ) as face_det:
         res = face_det.process(img_rgb)
-
-    if res.detections:
-        return res, h, w
+        if res.detections:
+            return res, h, w
 
     # Pass 2: short range sebagai fallback
     with mp_face_detection.FaceDetection(
-        model_selection=0,
-        min_detection_confidence=0.3
+        model_selection=0, min_detection_confidence=0.3
     ) as face_det:
         res2 = face_det.process(img_rgb)
-
-    return res2, h, w
+        return res2, h, w
 
 
 def pick_best_detection(detections, img_w: int, img_h: int):
@@ -99,8 +92,7 @@ def pick_best_detection(detections, img_w: int, img_h: int):
 
 def detect_and_crop_from_pil(pil_img: Image.Image) -> Optional[Image.Image]:
     """
-    Mirip fungsi detect_and_crop(image_path) versi kamu,
-    tapi diadaptasi untuk input PIL dan output PIL.
+    Mirip fungsi detect_and_crop(image_path) versi kamu, tapi diadaptasi untuk input PIL dan output PIL.
     """
     # Fix orientasi EXIF dan pastikan RGB
     pil_img = ImageOps.exif_transpose(pil_img).convert("RGB")
@@ -140,7 +132,6 @@ def detect_and_crop_from_pil(pil_img: Image.Image) -> Optional[Image.Image]:
     if not results or not results.detections:
         if not USE_CENTER_FALLBACK:
             return None
-
         # Center crop fallback (80% dari sisi terpendek)
         side = int(0.8 * min(h, w))
         cx, cy = w // 2, h // 2
@@ -156,7 +147,6 @@ def detect_and_crop_from_pil(pil_img: Image.Image) -> Optional[Image.Image]:
     # Pilih detection terbaik
     best_det = pick_best_detection(results.detections, w, h)
     bbox = best_det.location_data.relative_bounding_box
-
     x = int(bbox.xmin * w)
     y = int(bbox.ymin * h)
     bw = int(bbox.width * w)
@@ -170,7 +160,6 @@ def detect_and_crop_from_pil(pil_img: Image.Image) -> Optional[Image.Image]:
     # Tambah margin
     margin_x = int(bw * MARGIN_RATIO)
     margin_y = int(bh * MARGIN_RATIO)
-
     x1 = max(x - margin_x, 0)
     y1 = max(y - margin_y, 0)
     x2 = min(x + bw + margin_x, w)
@@ -183,23 +172,21 @@ def detect_and_crop_from_pil(pil_img: Image.Image) -> Optional[Image.Image]:
 
 
 # ============================================
-# BLOCK 4 – ARCFAce MODEL (ResNet50)
+# BLOCK 4 – ARCFACE MODEL (InceptionResnetV1 / FaceNet)
 # ============================================
 class ArcMarginProduct(nn.Module):
     """
     Sama seperti yang dipakai waktu training (harus konsisten).
     Di inference kita cuma pakai weight-nya & plain cosine.
     """
-    def __init__(self, in_features, out_features, s=25.0, m=0.10, easy_margin=False):
+    def __init__(self, in_features, out_features, s=25.0, m=0.30, easy_margin=False):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
         self.s = s
         self.m = m
-
         self.weight = nn.Parameter(torch.FloatTensor(out_features, in_features))
         nn.init.xavier_uniform_(self.weight)
-
         self.easy_margin = easy_margin
         self.cos_m = np.cos(m)
         self.sin_m = np.sin(m)
@@ -211,42 +198,32 @@ class ArcMarginProduct(nn.Module):
         cosine = F.linear(F.normalize(input), F.normalize(self.weight))
         sine = torch.sqrt(1.0 - torch.clamp(cosine.pow(2), 0.0, 1.0))
         phi = cosine * self.cos_m - sine * self.sin_m
-
         if self.easy_margin:
             phi = torch.where(cosine > 0, phi, cosine)
         else:
             phi = torch.where(cosine > self.th, phi, cosine - self.mm)
-
         one_hot = torch.zeros_like(cosine)
         one_hot.scatter_(1, label.view(-1, 1), 1.0)
-
         output = (one_hot * phi) + ((1.0 - one_hot) * cosine)
         output *= self.s
         return output
 
 
-class ResNet50ArcFace(nn.Module):
-    def __init__(self, num_classes, embedding_dim=512, s=25.0, m=0.10):
+class FaceNetArcFace(nn.Module):
+    def __init__(self, num_classes, embedding_dim=512, s=25.0, m=0.30):
         super().__init__()
-
-        weights = models.ResNet50_Weights.IMAGENET1K_V1
-        backbone = models.resnet50(weights=weights)
-
-        in_features = backbone.fc.in_features
-        backbone.fc = nn.Identity()
-
-        # freeze tidak wajib buat inference, tapi aman
-        for p in backbone.parameters():
-            p.requires_grad = False
-
-        self.backbone = backbone
+        # Backbone FaceNet pretrained di VGGFace2
+        self.backbone = InceptionResnetV1(
+            pretrained="vggface2",
+            classify=False,  # keluar 512-dim embedding
+        )
+        in_features = 512
         self.embedding = nn.Sequential(
             nn.Dropout(0.5),
             nn.Linear(in_features, embedding_dim),
             nn.ReLU(inplace=True),
             nn.Dropout(0.2),
         )
-
         self.arc_margin = ArcMarginProduct(
             in_features=embedding_dim,
             out_features=num_classes,
@@ -256,17 +233,15 @@ class ResNet50ArcFace(nn.Module):
         )
 
     def forward(self, x):
-        feat = self.backbone(x)               # (B, 2048)
-        emb = self.embedding(feat)            # (B, 512)
+        feat = self.backbone(x)  # (B, 512)
+        emb = self.embedding(feat)  # (B, 512)
         emb = F.normalize(emb, dim=1)
-
         # Inference: plain cosine logits (tanpa margin),
-        # tapi tetap pakai weight ArcFace
+        # pakai weight ArcFace
         logits = F.linear(
             F.normalize(emb),
             F.normalize(self.arc_margin.weight)
         ) * self.arc_margin.s
-
         return logits, emb
 
 
@@ -275,11 +250,11 @@ class ResNet50ArcFace(nn.Module):
 # ============================================
 def load_model():
     num_classes = len(label_map)
-    model = ResNet50ArcFace(
+    model = FaceNetArcFace(
         num_classes=num_classes,
         embedding_dim=512,
         s=25.0,
-        m=0.20,
+        m=0.30,  # samakan dengan training
     )
     state_dict = torch.load(MODEL_PATH, map_location=device)
     model.load_state_dict(state_dict)
@@ -329,7 +304,6 @@ def predict_with_crop(img: Image.Image):
     with torch.no_grad():
         logits, emb = model(x)
         probs = torch.softmax(logits, dim=1)[0]
-
     probs_np = probs.cpu().numpy()
 
     top_idx = int(probs_np.argmax())
@@ -342,185 +316,182 @@ def predict_with_crop(img: Image.Image):
             idx_to_name[i]: float(probs_np[i])
             for i in range(len(idx_to_name))
         }
-
     return face_pil, out_dict
 
 
 # ============================================
-# BLOCK 7 – ATTENDANCE FUNCTIONS
+# BLOCK 7 – ATTENDANCE LOGGING (CSV + TABLE)
 # ============================================
-def init_attendance_file():
-    """Initialize CSV file if it doesn't exist"""
+def initialize_attendance_log():
+    """Create attendance CSV file if it doesn't exist"""
     if not os.path.exists(ATTENDANCE_FILE):
         with open(ATTENDANCE_FILE, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
-            writer.writerow(['Timestamp', 'Name', 'Confidence'])
+            writer.writerow(['Timestamp', 'Name', 'Confidence', 'Status'])
 
 
-def record_attendance(name: str, confidence: float):
-    """Record attendance to CSV file"""
-    init_attendance_file()
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    
+def log_attendance(name: str, confidence: float):
+    """Log attendance with timestamp"""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Determine status based on confidence and name
+    if name in ["Unknown", "No face detected", "No image"]:
+        status = "Failed"
+    else:
+        status = "Success"
+
+    # Append to CSV
     with open(ATTENDANCE_FILE, 'a', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
-        writer.writerow([timestamp, name, f'{confidence:.2%}'])
-    
-    return f"✓ Attendance recorded for {name} at {timestamp}"
+        writer.writerow([timestamp, name, f"{confidence:.4f}", status])
+
+    return f"✓ Attendance logged for {name} at {timestamp} (Confidence: {confidence:.2%})"
 
 
-def get_attendance_log():
-    """Get attendance log as a formatted string"""
-    init_attendance_file()
-    
+def load_attendance_log_df():
+    """Load last 10 attendance records as pandas DataFrame for Gradio table."""
     if not os.path.exists(ATTENDANCE_FILE):
-        return "No attendance records yet."
-    
-    with open(ATTENDANCE_FILE, 'r', encoding='utf-8') as f:
-        reader = csv.reader(f)
-        rows = list(reader)
-    
-    if len(rows) <= 1:  # Only header or empty
-        return "No attendance records yet."
-    
-    # Format as table
-    log_text = "# Attendance Log\n\n"
-    log_text += "| Timestamp | Name | Confidence |\n"
-    log_text += "|-----------|------|------------|\n"
-    
-    # Show last 20 records (reversed to show newest first)
-    for row in reversed(rows[1:][:20]):
-        if len(row) == 3:
-            log_text += f"| {row[0]} | {row[1]} | {row[2]} |\n"
-    
-    return log_text
+        return pd.DataFrame(columns=["Timestamp", "Name", "Confidence", "Status"])
 
+    try:
+        df = pd.read_csv(ATTENDANCE_FILE)
+        if df.empty:
+            return pd.DataFrame(columns=["Timestamp", "Name", "Confidence", "Status"])
+        return df.tail(10).reset_index(drop=True)
+    except Exception as e:
+        # Kalau error, tampilkan 1 kolom error
+        return pd.DataFrame({"Error": [str(e)]})
+
+
+def mark_attendance(prediction_dict):
+    """
+    Process attendance from prediction dictionary.
+    Return: DataFrame (log untuk tabel)
+    """
+    if prediction_dict is None or len(prediction_dict) == 0:
+        # nggak usah pesan string, langsung balikin log
+        return load_attendance_log_df()
+
+    # Get the top prediction
+    top_name = max(prediction_dict, key=prediction_dict.get)
+    top_confidence = prediction_dict[top_name]
+
+    # Log the attendance
+    _ = log_attendance(top_name, top_confidence)
+
+    # Updated table
+    df = load_attendance_log_df()
+    return df
+
+
+
+# Initialize the attendance log file
+initialize_attendance_log()
 
 # ============================================
 # BLOCK 8 – GRADIO UI
 # ============================================
 with gr.Blocks() as demo:
-    gr.Markdown("<h1 id='title'>Face Recognition Attendance System</h1>")
-    gr.Markdown("<p id='description'>Upload a photo to detect and recognize faces. Mark attendance for recognized individuals.</p>")
-    
-    # State to store current recognized name and confidence
-    current_name = gr.State(value=None)
-    current_conf = gr.State(value=None)
-    
+    gr.Markdown("<h1 id='title'>Face Recognition Demo</h1>")
+    gr.Markdown(
+        "<p id='description'>Upload a photo with a face. The system will detect and crop the face using MediaPipe, then predict identity with FaceNet + ArcFace.</p>"
+    )
+
+    # State to store current prediction
+    current_prediction = gr.State(value={})
+
     with gr.Row():
         with gr.Column(scale=1):
             input_image = gr.Image(
                 type="pil",
                 label="Upload Photo",
-                height=400
+                height=600
             )
             with gr.Row():
                 clear_btn = gr.Button("Clear", variant="secondary", size="lg", scale=1)
                 predict_btn = gr.Button("Analyze Face", variant="primary", size="lg", scale=2)
-                
+
         with gr.Column(scale=1):
             cropped_face = gr.Image(
                 type="pil",
                 label="Detected Face",
-                height=200
+                height=302
             )
             prediction = gr.Label(
                 num_top_classes=5,
                 label="Identity Prediction (Top-5)"
             )
-            
-            # Attendance section
-            with gr.Group():
-                attend_btn = gr.Button(
-                    "✓ Mark Attendance", 
-                    variant="primary", 
-                    size="lg",
-                    visible=True
-                )
-                attendance_status = gr.Markdown("")
-    
-    # Attendance log section
-    gr.Markdown("---")
+            with gr.Row():
+                attend_btn = gr.Button("Attend", variant="primary", size="lg", scale=2)
+
     with gr.Row():
-        with gr.Column():
-            gr.Markdown("## 📋 Attendance Log")
-            refresh_log_btn = gr.Button("🔄 Refresh Log", size="sm")
-            attendance_log = gr.Markdown(value=get_attendance_log())
-    
-    # Helper function to extract top prediction
-    def analyze_and_store(img):
-        face, pred_dict = predict_with_crop(img)
-        
-        # Extract top prediction
-        if pred_dict and "Unknown" not in pred_dict and "No face detected" not in pred_dict and "No image" not in pred_dict:
-            top_name = max(pred_dict, key=pred_dict.get)
-            top_conf = pred_dict[top_name]
-            return face, pred_dict, top_name, top_conf, ""
-        else:
-            return face, pred_dict, None, None, ""
-    
-    # Function to mark attendance
-    def mark_attendance(name, conf):
-        if name is None or name == "Unknown":
-            return "⚠️ Cannot mark attendance: Unknown person", get_attendance_log()
-        
-        message = record_attendance(name, conf)
-        updated_log = get_attendance_log()
-        return message, updated_log
-    
-    # Predict button
+        attendance_table = gr.Dataframe(
+            label="Attendance Log (Last 10 Records)",
+            interactive=False,
+            value=load_attendance_log_df(),
+            wrap=False,
+        )
+    with gr.Row():
+        refresh_btn = gr.Button(
+            "Refresh Log",
+            variant="secondary"
+        )
+
+    # Event handlers
+    def predict_and_store(img):
+        face, pred = predict_with_crop(img)
+        return face, pred, pred
+
     predict_btn.click(
-        fn=analyze_and_store,
+        fn=predict_and_store,
         inputs=input_image,
-        outputs=[cropped_face, prediction, current_name, current_conf, attendance_status]
+        outputs=[cropped_face, prediction, current_prediction]
     )
-    
-    # Attendance button
+
+    clear_btn.click(
+        fn=lambda: (None, None, None, {}, load_attendance_log_df()),
+        inputs=None,
+        outputs=[input_image, cropped_face, prediction, current_prediction, attendance_table]
+    )
+
+
     attend_btn.click(
         fn=mark_attendance,
-        inputs=[current_name, current_conf],
-        outputs=[attendance_status, attendance_log]
+        inputs=current_prediction,
+        outputs=[ attendance_table]
     )
-    
-    # Clear button
-    clear_btn.click(
-        fn=lambda: (None, None, None, None, None, ""),
+
+    refresh_btn.click(
+        fn=lambda: load_attendance_log_df(),
         inputs=None,
-        outputs=[input_image, cropped_face, prediction, current_name, current_conf, attendance_status]
-    )
-    
-    # Refresh log button
-    refresh_log_btn.click(
-        fn=get_attendance_log,
-        inputs=None,
-        outputs=attendance_log
+        outputs=[attendance_table]
     )
 
 if __name__ == "__main__":
     demo.launch(
         theme=gr.themes.Soft(),
         css="""
-            .gradio-container {
-                max-width: 1200px !important;
-                margin: auto;
-            }
-            #title {
-                text-align: center;
-                font-size: 2.5em;
-                font-weight: 700;
-                margin-bottom: 0.5em;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-            }
-            #description {
-                text-align: center;
-                color: #666;
-                font-size: 1.1em;
-                margin-bottom: 2em;
-            }
-            .image-container img {
-                object-fit: contain !important;
-            }
+        .gradio-container {
+            max-width: 1200px !important;
+            margin: auto;
+        }
+        #title {
+            text-align: center;
+            font-size: 2.5em;
+            font-weight: 700;
+            margin-bottom: 0.5em;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        #description {
+            text-align: center;
+            color: #666;
+            font-size: 1.1em;
+            margin-bottom: 2em;
+        }
+        .image-container img {
+            object-fit: contain !important;
+        }
         """
     )
