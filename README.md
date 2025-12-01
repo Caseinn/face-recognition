@@ -149,7 +149,7 @@ No installation needed! Try our live demo:
 
 <div align="center">
 
-**[🤗 Launch Live Demo](https://huggingface.co/spaces/ditorifki/face-recognition-demo)**
+**[🤗 Launch Live Demo](https://huggingface.co/spaces/ditorifki/attendance-system)**
 
 </div>
 
