@@ -85,6 +85,7 @@ face-recognition/
 ├── 📄 app.py                    # Gradio web interface with attendance
 ├── 📄 attendance_log.csv        # Attendance records
 ├── 📓 crop.ipynb
+├── 📓 evaluation.ipynb           # Evaluate trained face recognition model on test dataset
 └── 📝 README.md
 ```
 
