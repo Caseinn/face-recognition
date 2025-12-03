@@ -515,10 +515,6 @@ if __name__ == "__main__":
         css="""
         .gradio-container { max-width: 1300px !important; margin: auto; }
 
-        body, p, span, div, label, .gr-markdown, .gr-markdown p, .gradio-container * {
-            color: #000 !important;
-        }
-
         #title {
             text-align: center;
             font-size: 2.5em;
@@ -534,7 +530,6 @@ if __name__ == "__main__":
             text-align: center;
             font-size: 1.1em;
             margin-bottom: 2em;
-            color: #000 !important;
         }
 
         .image-container img {
@@ -542,7 +537,7 @@ if __name__ == "__main__":
         }
 
         #students-list-container {
-            min-height: 85vh; /* Desktop default */
+            min-height: 85vh;
             display: flex;
             flex-direction: column;
             justify-content: flex-start;
