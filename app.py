@@ -391,90 +391,120 @@ def mark_attendance(prediction_dict):
 initialize_attendance_log()
 
 # ============================================
-# BLOCK 8 – GRADIO UI
+# BLOCK 8 – GRADIO UI (WITH TABS)
 # ============================================
+# Siapkan DataFrame daftar mahasiswa dari label_map.json
+students_df = pd.DataFrame(
+    [
+        {"Index": idx + 1, "Name": name}
+        for name, idx in sorted(label_map.items(), key=lambda kv: kv[1])
+    ]
+)
+
+unknown_threshold_state = gr.State(value=UNKNOWN_THRESHOLD)
+
+
 with gr.Blocks() as demo:
-    gr.Markdown("<h1 id='title'>Attendance System</h1>")
-    gr.Markdown(
-        "<p id='description'>Upload a photo with a face. The system will detect and crop the face using MediaPipe, then predict identity with FaceNet + ArcFace.</p>"
-    )
-
-    # State to store current prediction
-    current_prediction = gr.State(value={})
-
-    with gr.Row():
-        with gr.Column(scale=1):
-            input_image = gr.Image(
-                type="pil",
-                label="Upload Photo",
-                height=600
+    with gr.Tabs():
+        # ===================== TAB 1 – FACE ATTENDANCE =====================
+        with gr.Tab("Face Attendance"):
+            gr.Markdown(
+                "<h1 id='title'>InVision : Smart Attendance System using FaceNet + ArcFace</h1>"
             )
+            gr.Markdown(
+                "<p id='description'>Upload a photo with a face. The system will detect and crop the face using MediaPipe, then predict identity with FaceNet + ArcFace, and log attendance automatically.</p>"
+            )
+
+            # State to store current prediction
+            current_prediction = gr.State(value={})
+
             with gr.Row():
-                clear_btn = gr.Button("Clear", variant="secondary", size="lg", scale=1)
-                predict_btn = gr.Button("Analyze Face", variant="primary", size="lg", scale=2)
+                with gr.Column(scale=1):
+                    input_image = gr.Image(
+                        type="pil",
+                        label="Upload Photo",
+                        height=600
+                    )
+                    with gr.Row():
+                        clear_btn = gr.Button("Clear", variant="secondary", size="lg", scale=1)
+                        predict_btn = gr.Button("Analyze Face", variant="primary", size="lg", scale=2)
 
-        with gr.Column(scale=1):
-            cropped_face = gr.Image(
-                type="pil",
-                label="Detected Face",
-                height=302
-            )
-            prediction = gr.Label(
-                num_top_classes=5,
-                label="Identity Prediction (Top-5)"
-            )
+                with gr.Column(scale=1):
+                    cropped_face = gr.Image(
+                        type="pil",
+                        label="Detected Face",
+                        height=302
+                    )
+                    prediction = gr.Label(
+                        num_top_classes=5,
+                        label="Identity Prediction (Top-5)"
+                    )
+                    with gr.Row():
+                        attend_btn = gr.Button("Attend", variant="primary", size="lg", scale=2)
+
             with gr.Row():
-                attend_btn = gr.Button("Attend", variant="primary", size="lg", scale=2)
+                attendance_table = gr.Dataframe(
+                    label="Attendance Log (Last 10 Records)",
+                    interactive=False,
+                    value=load_attendance_log_df(),
+                    wrap=False,
+                )
+            with gr.Row():
+                refresh_btn = gr.Button(
+                    "Refresh Log",
+                    variant="secondary"
+                )
 
-    with gr.Row():
-        attendance_table = gr.Dataframe(
-            label="Attendance Log (Last 10 Records)",
-            interactive=False,
-            value=load_attendance_log_df(),
-            wrap=False,
-        )
-    with gr.Row():
-        refresh_btn = gr.Button(
-            "Refresh Log",
-            variant="secondary"
-        )
+            # Event handlers
+            def predict_and_store(img):
+                face, pred = predict_with_crop(img)
+                return face, pred, pred
 
-    # Event handlers
-    def predict_and_store(img):
-        face, pred = predict_with_crop(img)
-        return face, pred, pred
+            predict_btn.click(
+                fn=predict_and_store,
+                inputs=input_image,
+                outputs=[cropped_face, prediction, current_prediction]
+            )
 
-    predict_btn.click(
-        fn=predict_and_store,
-        inputs=input_image,
-        outputs=[cropped_face, prediction, current_prediction]
-    )
+            clear_btn.click(
+                fn=lambda: (None, None, None, {}, load_attendance_log_df()),
+                inputs=None,
+                outputs=[input_image, cropped_face, prediction, current_prediction, attendance_table]
+            )
 
-    clear_btn.click(
-        fn=lambda: (None, None, None, {}, load_attendance_log_df()),
-        inputs=None,
-        outputs=[input_image, cropped_face, prediction, current_prediction, attendance_table]
-    )
+            attend_btn.click(
+                fn=mark_attendance,
+                inputs=current_prediction,
+                outputs=[attendance_table]
+            )
 
+            refresh_btn.click(
+                fn=lambda: load_attendance_log_df(),
+                inputs=None,
+                outputs=[attendance_table]
+            )
 
-    attend_btn.click(
-        fn=mark_attendance,
-        inputs=current_prediction,
-        outputs=[ attendance_table]
-    )
+        # ===================== TAB 2 – STUDENTS LIST =====================
+        with gr.Tab("Students List"):
+            with gr.Column(elem_id="students-list-container"):
+                gr.Markdown(
+                    f"<h2>Students List</h2>"
+                    f"<p>Total: <b>{len(label_map)}</b> students</p>"
+                )
+                gr.Dataframe(
+                    value=students_df,
+                    interactive=False,
+                    label="Students (Label Map)",
+                    wrap=False,
+                    elem_id="students-table"  # for custom mobile CSS
+                )
 
-    refresh_btn.click(
-        fn=lambda: load_attendance_log_df(),
-        inputs=None,
-        outputs=[attendance_table]
-    )
 
 if __name__ == "__main__":
     demo.launch(
-        server_name="0.0.0.0",
         server_port=int(os.getenv("PORT", 7860)),
         ssr_mode=False, 
-        theme=gr.themes.Soft(),
+        theme=gr.themes.Ocean(),
         css="""
         .gradio-container {
             max-width: 1200px !important;
@@ -485,7 +515,7 @@ if __name__ == "__main__":
             font-size: 2.5em;
             font-weight: 700;
             margin-bottom: 0.5em;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(90deg, #5da6e1 0%, #88d7c1 70%, #76cf9f 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
         }
@@ -498,5 +528,21 @@ if __name__ == "__main__":
         .image-container img {
             object-fit: contain !important;
         }
+        
+        #students-list-container {
+            min-height: 85vh; /* Desktop default */
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            padding-bottom: 20px;
+        }
+
+        /* Mobile override */
+        @media (max-width: 768px) {
+            #students-list-container {
+                min-height: 100vh !important; /* Full screen on mobile */
+            }
+        }
         """
     )
+
