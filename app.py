@@ -513,6 +513,14 @@ if __name__ == "__main__":
         ssr_mode=False,
         theme=gr.themes.Ocean(),
         css="""
+        html::-webkit-scrollbar,
+        body::-webkit-scrollbar {
+            display: none;
+        }
+
+        html, body {
+            scrollbar-width: none;
+        }
         .gradio-container { max-width: 1300px !important; margin: auto; }
 
         #title {
