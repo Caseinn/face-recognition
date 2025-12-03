@@ -9,7 +9,6 @@ import csv
 import os
 from zoneinfo import ZoneInfo
 
-
 from PIL import Image, ImageOps
 
 import torch
@@ -27,7 +26,7 @@ MODEL_PATH = "models/best_facenet_arcface_kfold5.pth"  # ganti ke model FaceNet-
 LABEL_MAP_PATH = "models/label_map.json"
 ATTENDANCE_FILE = "attendance_log.csv"
 IMG_SIZE = 160
-UNKNOWN_THRESHOLD = 0.3
+UNKNOWN_THRESHOLD = 0.3  # default value untuk slider
 
 # ---- Face crop config (mirip script crop-mu) ----
 TARGET_SIZE = (384, 384)
@@ -287,10 +286,11 @@ def prepare_image(pil_img: Image.Image) -> torch.Tensor:
 # ============================================
 # BLOCK 6 – INFERENCE PIPELINE
 # ============================================
-def predict_with_crop(img: Image.Image):
+def predict_with_crop(img: Image.Image, threshold: float):
     """
     Fungsi utama untuk Gradio:
     - input: PIL image (raw upload)
+    - threshold: batas Unknown dari slider
     - output: (cropped_face_PIL, dict label->prob)
     """
     if img is None:
@@ -311,7 +311,8 @@ def predict_with_crop(img: Image.Image):
     top_idx = int(probs_np.argmax())
     top_prob = float(probs_np[top_idx])
 
-    if top_prob < UNKNOWN_THRESHOLD:
+    # Gunakan threshold dari slider
+    if top_prob < threshold:
         out_dict = {"Unknown": top_prob}
     else:
         out_dict = {
@@ -386,7 +387,6 @@ def mark_attendance(prediction_dict):
     return df
 
 
-
 # Initialize the attendance log file
 initialize_attendance_log()
 
@@ -401,9 +401,6 @@ students_df = pd.DataFrame(
     ]
 )
 
-unknown_threshold_state = gr.State(value=UNKNOWN_THRESHOLD)
-
-
 with gr.Blocks() as demo:
     with gr.Tabs():
         # ===================== TAB 1 – FACE ATTENDANCE =====================
@@ -414,6 +411,8 @@ with gr.Blocks() as demo:
             gr.Markdown(
                 "<p id='description'>Upload a photo with a face. The system will detect and crop the face using MediaPipe, then predict identity with FaceNet + ArcFace, and log attendance automatically.</p>"
             )
+
+
 
             # State to store current prediction
             current_prediction = gr.State(value={})
@@ -442,6 +441,14 @@ with gr.Blocks() as demo:
                     with gr.Row():
                         attend_btn = gr.Button("Attend", variant="primary", size="lg", scale=2)
 
+            unknown_slider = gr.Slider(
+                minimum=0.1,
+                maximum=0.9,
+                value=UNKNOWN_THRESHOLD,
+                step=0.05,
+                label="Unknown Threshold",
+            )
+
             with gr.Row():
                 attendance_table = gr.Dataframe(
                     label="Attendance Log (Last 10 Records)",
@@ -456,13 +463,13 @@ with gr.Blocks() as demo:
                 )
 
             # Event handlers
-            def predict_and_store(img):
-                face, pred = predict_with_crop(img)
+            def predict_and_store(img, thr):
+                face, pred = predict_with_crop(img, thr)
                 return face, pred, pred
 
             predict_btn.click(
                 fn=predict_and_store,
-                inputs=input_image,
+                inputs=[input_image, unknown_slider],
                 outputs=[cropped_face, prediction, current_prediction]
             )
 
@@ -494,7 +501,7 @@ with gr.Blocks() as demo:
                 gr.Dataframe(
                     value=students_df,
                     interactive=False,
-                    label="Students (Label Map)",
+                    label="",
                     wrap=False,
                     elem_id="students-table"  # for custom mobile CSS
                 )
@@ -503,7 +510,7 @@ with gr.Blocks() as demo:
 if __name__ == "__main__":
     demo.launch(
         server_port=int(os.getenv("PORT", 7860)),
-        ssr_mode=False, 
+        ssr_mode=False,
         theme=gr.themes.Ocean(),
         css="""
         .gradio-container {
@@ -528,7 +535,7 @@ if __name__ == "__main__":
         .image-container img {
             object-fit: contain !important;
         }
-        
+
         #students-list-container {
             min-height: 85vh; /* Desktop default */
             display: flex;
@@ -545,4 +552,3 @@ if __name__ == "__main__":
         }
         """
     )
-
