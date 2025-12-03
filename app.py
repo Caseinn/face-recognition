@@ -401,7 +401,7 @@ students_df = pd.DataFrame(
     ]
 )
 
-with gr.Blocks() as demo:
+with gr.Blocks(title="InVision – Smart Attendance") as demo:
     with gr.Tabs():
         # ===================== TAB 1 – FACE ATTENDANCE =====================
         with gr.Tab("Face Attendance"):
@@ -513,25 +513,30 @@ if __name__ == "__main__":
         ssr_mode=False,
         theme=gr.themes.Ocean(),
         css="""
-        .gradio-container {
-            max-width: 1200px !important;
-            margin: auto;
+        .gradio-container { max-width: 1300px !important; margin: auto; }
+
+        body, p, span, div, label, .gr-markdown, .gr-markdown p, .gradio-container * {
+            color: #000 !important;
         }
+
         #title {
             text-align: center;
             font-size: 2.5em;
             font-weight: 700;
             margin-bottom: 0.5em;
             background: linear-gradient(90deg, #5da6e1 0%, #88d7c1 70%, #76cf9f 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+            -webkit-background-clip: text !important;
+            -webkit-text-fill-color: transparent !important;
+            color: transparent !important;
         }
+
         #description {
             text-align: center;
-            color: #666;
             font-size: 1.1em;
             margin-bottom: 2em;
+            color: #000 !important;
         }
+
         .image-container img {
             object-fit: contain !important;
         }
@@ -547,8 +552,9 @@ if __name__ == "__main__":
         /* Mobile override */
         @media (max-width: 768px) {
             #students-list-container {
-                min-height: 100vh !important; /* Full screen on mobile */
+                min-height: 100vh !important;
             }
         }
         """
     )
+
